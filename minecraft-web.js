@@ -29,15 +29,14 @@ const template = document.createElement('template');
 template.innerHTML = `
   <style>
     :host {
-      display: inline-block;
-      aspect-ratio: 854 / 480;
+      display: block;
+      width: 100%;
+      height: 100%;
+      position: relative;
 
       background: black;
       color: #eee;
       color-scheme: dark;
-
-      width: 854px;
-      height: 480px;
     }
 
     :host([hidden]) {
@@ -45,13 +44,14 @@ template.innerHTML = `
     }
 
     canvas {
-      width: inherit;
-      height: inherit;
+      width: 100%;
+      height: 100%;
+      display: block;
     }
 
     .display {
-      width: 854px;
-      height: 480px;
+      width: 100%;
+      height: 100%;
       position: absolute;
       inset: 0;
       visibility: hidden;
@@ -119,6 +119,24 @@ export default class MinecraftClient extends HTMLElement {
     this.#canvas.tabIndex = -1;
     this.#canvas.style.display = 'none';
 
+    const updateSize = () => {
+      const rect = this.#canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.round(rect.width || this.#canvas.clientWidth || 854));
+      const height = Math.max(1, Math.round(rect.height || this.#canvas.clientHeight || 480));
+      if (this.#canvas.width !== width || this.#canvas.height !== height) {
+        this.#canvas.width = width;
+        this.#canvas.height = height;
+        this.#canvas.dispatchEvent(new Event('resize'));
+      }
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateSize();
+    });
+    resizeObserver.observe(this);
+    resizeObserver.observe(this.#canvas);
+    window.addEventListener('resize', updateSize);
+
     this.#progress = shadowRoot.querySelector('progress');
     this.#progress.style.display = 'none';
 
@@ -178,6 +196,11 @@ export default class MinecraftClient extends HTMLElement {
     this.#progress.style.display = 'none';
 
     this.#canvas.style.display = 'unset';
+    const rect = this.#canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width || this.#canvas.clientWidth || 854));
+    const height = Math.max(1, Math.round(rect.height || this.#canvas.clientHeight || 480));
+    this.#canvas.width = width;
+    this.#canvas.height = height;
     window.lwjglCanvasElement = this.#canvas;
 
     const exitCode = await cheerpjRunMain(
@@ -187,7 +210,9 @@ export default class MinecraftClient extends HTMLElement {
       "--session", "0",
       "--version", "1.6.4",
       "--gameDir", "/files/game",
-      "--tweakClass", "cpw.mods.fml.common.launcher.FMLTweaker"
+      "--tweakClass", "cpw.mods.fml.common.launcher.FMLTweaker",
+      "--width", String(width),
+      "--height", String(height)
     );
 
     this.#canvas.style.display = 'none';

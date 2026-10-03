@@ -7,6 +7,10 @@
     <link rel="icon" type="image/x-icon" href="./favicon.ico">
     <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
     <style>
+      #launcher-menu {
+        margin-left: 5px;
+        padding: 5px;
+      }
       #launcher-menu button {
         padding: 10px 20px;
         margin-top: 15px;
@@ -24,6 +28,11 @@
         font-size: 14px;
         color: #000;
       }
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+      }
       #game-container {
         display: none;
         width: 100%;
@@ -36,7 +45,7 @@
   <body>
 
     <div id="launcher-menu">
-      <h2>WebForge Launcher v11 - Made by Cucuzacu</h2>
+      <h2>WebForge Launcher v12 - Made by Cucuzacu</h2>
 
       <div>
         <label for="username-input">Username: </label>
@@ -67,7 +76,7 @@
     </div>
 
     <div id="game-container">
-      <minecraft-client style="width: 854px; height: 480px;"></minecraft-client>
+      <minecraft-client style="width: 100%; height: 100%;"></minecraft-client>
     </div>
 
     <script type="module">

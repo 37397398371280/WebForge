@@ -463,10 +463,13 @@ var textureWidths = [];
 var textureHeights = [];
 var activeTextureUnit = 0;
 var boundTextures = [0, 0, 0, 0, 0, 0, 0, 0];
+let lastCanvasWidth = glCanvas.width;
+let lastCanvasHeight = glCanvas.height;
+
 // We need to use an FBO as the main target to support copyTexSubImage2D that seems broken otherwise
 var fbTexture = glCtx.createTexture();
 glCtx.bindTexture(glCtx.TEXTURE_2D, fbTexture);
-glCtx.texImage2D(glCtx.TEXTURE_2D, 0, glCtx.RGBA, 1000, 500, 0, glCtx.RGBA, glCtx.UNSIGNED_BYTE, null);
+glCtx.texImage2D(glCtx.TEXTURE_2D, 0, glCtx.RGBA, lastCanvasWidth, lastCanvasHeight, 0, glCtx.RGBA, glCtx.UNSIGNED_BYTE, null);
 glCtx.bindTexture(glCtx.TEXTURE_2D, null);
 var mainFb = glCtx.createFramebuffer();
 glCtx.bindFramebuffer(glCtx.READ_FRAMEBUFFER, mainFb);
@@ -475,18 +478,45 @@ glCtx.framebufferTexture2D(glCtx.FRAMEBUFFER, glCtx.COLOR_ATTACHMENT0, glCtx.TEX
 // Add a depth render buffer
 var depthRb = glCtx.createRenderbuffer();
 glCtx.bindRenderbuffer(glCtx.RENDERBUFFER, depthRb);
-glCtx.renderbufferStorage(glCtx.RENDERBUFFER, glCtx.DEPTH_COMPONENT16, 1000, 500);
+glCtx.renderbufferStorage(glCtx.RENDERBUFFER, glCtx.DEPTH_COMPONENT16, lastCanvasWidth, lastCanvasHeight);
 glCtx.framebufferRenderbuffer(glCtx.FRAMEBUFFER, glCtx.DEPTH_ATTACHMENT, glCtx.RENDERBUFFER, depthRb);
 // Synthetize a focus event, it's needed for LWJGL logic
 var eventQueue = [{type:"focus"}];
 
-function convertMousePos(x, y) {
-	// We have a framebuffer of 1000x500, but Minecraft renders into the bottom left corner of it.
-	const offsetX = 0;
-	const offsetY = glCanvas.height - 500;
+function updateFramebufferSize(w, h) {
+	glCtx.bindTexture(glCtx.TEXTURE_2D, fbTexture);
+	glCtx.texImage2D(glCtx.TEXTURE_2D, 0, glCtx.RGBA, w, h, 0, glCtx.RGBA, glCtx.UNSIGNED_BYTE, null);
+	glCtx.bindTexture(glCtx.TEXTURE_2D, null);
 
-	const xRatio = glCanvas.width / glCanvas.clientWidth;
-	const yRatio = glCanvas.height / glCanvas.clientHeight;
+	glCtx.bindRenderbuffer(glCtx.RENDERBUFFER, depthRb);
+	glCtx.renderbufferStorage(glCtx.RENDERBUFFER, glCtx.DEPTH_COMPONENT16, w, h);
+	glCtx.bindRenderbuffer(glCtx.RENDERBUFFER, null);
+}
+
+function handleResize() {
+	const w = Math.max(1, Math.round(glCanvas.clientWidth || glCanvas.width));
+	const h = Math.max(1, Math.round(glCanvas.clientHeight || glCanvas.height));
+	if (glCanvas.width !== w || glCanvas.height !== h) {
+		glCanvas.width = w;
+		glCanvas.height = h;
+	}
+	if (glCanvas.width !== lastCanvasWidth || glCanvas.height !== lastCanvasHeight) {
+		lastCanvasWidth = glCanvas.width;
+		lastCanvasHeight = glCanvas.height;
+		updateFramebufferSize(lastCanvasWidth, lastCanvasHeight);
+		eventQueue.push({ type: "configure" });
+	}
+}
+
+glCanvas.addEventListener("resize", handleResize);
+window.addEventListener("resize", handleResize);
+
+function convertMousePos(x, y) {
+	const offsetX = 0;
+	const offsetY = 0;
+
+	const xRatio = glCanvas.clientWidth ? (glCanvas.width / glCanvas.clientWidth) : 1;
+	const yRatio = glCanvas.clientHeight ? (glCanvas.height / glCanvas.clientHeight) : 1;
 
 	return [x * xRatio - offsetX, y * yRatio - offsetY];
 }
@@ -529,6 +559,13 @@ function mouseHandler(evt) {
 glCanvas.addEventListener("mousedown", mouseHandler);
 glCanvas.addEventListener("mouseup", mouseHandler);
 glCanvas.addEventListener("contextmenu", evt => evt.preventDefault());
+glCanvas.addEventListener("wheel", evt => {
+	evt.preventDefault();
+	const [x, y] = convertMousePos(evt.offsetX, evt.offsetY);
+	const button = evt.deltaY < 0 ? 4 : 5;
+	eventQueue.push({ type: "mousedown", x, y, button });
+	eventQueue.push({ type: "mouseup", x, y, button });
+}, { passive: false });
 
 /** @param {KeyboardEvent} e */
 function keyHandler(e)
@@ -657,6 +694,17 @@ function Java_org_lwjgl_opengl_LinuxDisplay_nLockAWT()
 
 function Java_org_lwjgl_opengl_LinuxDisplay_nSwitchDisplayMode(lib, screen, extension, mode)
 {
+	if (!document.fullscreenElement) {
+		if (glCanvas.requestFullscreen) {
+			glCanvas.requestFullscreen().catch(() => {});
+		} else if (document.documentElement.requestFullscreen) {
+			document.documentElement.requestFullscreen().catch(() => {});
+		}
+	} else {
+		if (document.exitFullscreen) {
+			document.exitFullscreen().catch(() => {});
+		}
+	}
 }
 
 function Java_org_lwjgl_opengl_LinuxDisplay_nUnlockAWT()
@@ -693,8 +741,9 @@ function Java_org_lwjgl_opengl_LinuxDisplay_nGetDefaultScreen()
 async function Java_org_lwjgl_opengl_LinuxDisplay_nGetAvailableDisplayModes(lib)
 {
 	var DisplayMode = await lib.org.lwjgl.opengl.DisplayMode;
-	var d = await new DisplayMode(1000, 500);
-	return [d];
+	var d1 = await new DisplayMode(Math.round(window.screen.width), Math.round(window.screen.height));
+	var d2 = await new DisplayMode(Math.round(glCanvas.width), Math.round(glCanvas.height));
+	return [d1, d2];
 }
 
 function Java_org_lwjgl_opengl_LinuxDisplay_nGetCurrentGammaRamp()
@@ -773,7 +822,7 @@ function Java_org_lwjgl_opengl_LinuxMouse_nQueryPointer()
 
 function Java_org_lwjgl_opengl_LinuxMouse_nGetWindowHeight()
 {
-	return 500;
+	return glCanvas.height;
 }
 
 function Java_org_lwjgl_opengl_LinuxKeyboard_getModifierMapping()
@@ -811,6 +860,26 @@ function Java_org_lwjgl_opengl_GLContext_ngetFunctionAddress(lib, stringPtr)
 	return 1;
 }
 
+function Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureX()
+{
+	return 0;
+}
+
+function Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureY()
+{
+	return 0;
+}
+
+function Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureWidth()
+{
+	return glCanvas.width;
+}
+
+function Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureHeight()
+{
+	return glCanvas.height;
+}
+
 function Java_org_lwjgl_opengl_GL11_nglGetString(lib, id, funcPtr)
 {
 	checkNoList(curList);
@@ -846,8 +915,8 @@ function Java_org_lwjgl_opengl_GL11_nglGetIntegerv(lib, id, memPtr, funcPtr)
 	if (id == /*GL_VIEWPORT*/0xba2) {
 		v.setInt32(ptr, 0, true);
 		v.setInt32(ptr + 4, 0, true);
-		v.setInt32(ptr + 8, 1000, true);
-		v.setInt32(ptr + 12, 500, true);
+		v.setInt32(ptr + 8, glCanvas.width, true);
+		v.setInt32(ptr + 12, glCanvas.height, true);
 	} else {
 		try {
 			var val = glCtx.getParameter(id);
@@ -895,7 +964,7 @@ function Java_org_lwjgl_opengl_LinuxContextImplementation_nSwapBuffers()
 	if(verboseLog)
 		console.warn("SwapBuffer");
 	glCtx.bindFramebuffer(glCtx.DRAW_FRAMEBUFFER, null);
-	glCtx.blitFramebuffer(0, 0, 1000, 500, 0, 0, 1000, 500, glCtx.COLOR_BUFFER_BIT, glCtx.NEAREST);
+	glCtx.blitFramebuffer(0, 0, glCanvas.width, glCanvas.height, 0, 0, glCanvas.width, glCanvas.height, glCtx.COLOR_BUFFER_BIT, glCtx.NEAREST);
 	glCtx.bindFramebuffer(glCtx.DRAW_FRAMEBUFFER, mainFb);
 	frameCount++;
 	if(frameCount == frameLimit)
@@ -908,6 +977,7 @@ function Java_org_lwjgl_opengl_LinuxContextImplementation_nSwapBuffers()
 
 function Java_org_lwjgl_opengl_LinuxEvent_getPending()
 {
+	handleResize();
 	return eventQueue.length;
 }
 
@@ -1672,13 +1742,11 @@ function Java_org_lwjgl_openal_AL_nDestroy()
 {
 }
 
-// Basic input support
 async function Java_org_lwjgl_opengl_LinuxEvent_createEventBuffer(lib)
 {
-	// This is intended to represent a X11 event, but we are free to use any layout
 	var ByteBuffer = await lib.java.nio.ByteBuffer;
 	var buf = await ByteBuffer.allocateDirect(4 * 8);
-	buf.__addr = Number(await buf.address());
+	buf.__addr = (typeof buf.address === "number") ? buf.address : 0;
 	return buf;
 }
 
@@ -1722,6 +1790,14 @@ function Java_org_lwjgl_opengl_LinuxEvent_nNextEvent(lib, windowId, buffer)
 		case "keyup":
 			v.setInt32(bufferAddr + 0, /*KeyRelease*/3, true);
 			v.setInt32(bufferAddr + 4, e.keyCode, true);
+			break;
+		case "resize":
+		case "configure":
+			v.setInt32(bufferAddr + 0, 22, true);
+			v.setInt32(bufferAddr + 4, 0, true);
+			v.setInt32(bufferAddr + 8, 0, true);
+			v.setInt32(bufferAddr + 12, glCanvas.width, true);
+			v.setInt32(bufferAddr + 16, glCanvas.height, true);
 			break;
 		default:
 			v.setInt32(bufferAddr + 0, 9 /*FocusIn*/, true);
@@ -1823,7 +1899,35 @@ function Java_org_lwjgl_opengl_LinuxDisplay_nSetWindowIcon()
 
 function Java_org_lwjgl_opengl_LinuxMouse_nGetWindowWidth()
 {
-	return 1000;
+	return glCanvas.width;
+}
+
+function Java_org_lwjgl_opengl_LinuxDisplay_nGetWidth()
+{
+	return glCanvas.width;
+}
+
+function Java_org_lwjgl_opengl_LinuxDisplay_nGetHeight()
+{
+	return glCanvas.height;
+}
+
+function Java_org_lwjgl_opengl_LinuxDisplay_nGetX()
+{
+	return 0;
+}
+
+function Java_org_lwjgl_opengl_LinuxDisplay_nGetY()
+{
+	return 0;
+}
+
+function Java_org_lwjgl_opengl_LinuxDisplay_nSetWindowSize(lib, display, window, width, height, resizable)
+{
+}
+
+function Java_org_lwjgl_opengl_LinuxDisplay_nReshape(lib, display, window, x, y, width, height)
+{
 }
 
 function Java_org_lwjgl_opengl_LinuxMouse_nSendWarpEvent()
@@ -1938,6 +2042,10 @@ export default {
 	Java_org_lwjgl_opengl_LinuxContextImplementation_nMakeCurrent,
 	Java_org_lwjgl_opengl_LinuxContextImplementation_nIsCurrent,
 	Java_org_lwjgl_opengl_GLContext_ngetFunctionAddress,
+	Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureX,
+	Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureY,
+	Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureWidth,
+	Java_org_lwjgl_opengl_LinuxEvent_nGetConfigureHeight,
 	Java_org_lwjgl_opengl_GL11_nglGetString,
 	Java_org_lwjgl_opengl_GL11_nglGetIntegerv,
 	Java_org_lwjgl_opengl_GL11_nglGetError,
@@ -2041,6 +2149,12 @@ export default {
 	Java_org_lwjgl_opengl_LinuxDisplay_nDefineCursor,
 	Java_org_lwjgl_opengl_LinuxDisplay_getRootWindow,
 	Java_org_lwjgl_opengl_LinuxDisplay_nSetWindowIcon,
+	Java_org_lwjgl_opengl_LinuxDisplay_nGetWidth,
+	Java_org_lwjgl_opengl_LinuxDisplay_nGetHeight,
+	Java_org_lwjgl_opengl_LinuxDisplay_nGetX,
+	Java_org_lwjgl_opengl_LinuxDisplay_nGetY,
+	Java_org_lwjgl_opengl_LinuxDisplay_nSetWindowSize,
+	Java_org_lwjgl_opengl_LinuxDisplay_nReshape,
 	Java_org_lwjgl_opengl_LinuxMouse_nGetWindowWidth,
 	Java_org_lwjgl_opengl_LinuxMouse_nSendWarpEvent,
 	Java_org_lwjgl_opengl_LinuxMouse_nWarpCursor,
