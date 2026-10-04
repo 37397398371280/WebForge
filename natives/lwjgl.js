@@ -1029,7 +1029,7 @@ function Java_org_lwjgl_opengl_GL11_nglViewport(lib, x, y, width, height, funcPt
 function Java_org_lwjgl_opengl_GL11_nglDisable(lib, a, funcPtr)
 {
 	checkNoList(curList);
-	if(a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST){
+	if(a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST || a == glCtx.STENCIL_TEST || a == 0x8037/*GL_POLYGON_OFFSET_FILL*/){
 		glCtx.disable(a);
 	} else if(a == 0x806F/*GL_TEXTURE_3D*/) {
 		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 0.0);
@@ -1047,15 +1047,12 @@ function Java_org_lwjgl_opengl_GL11_nglDisable(lib, a, funcPtr)
 function Java_org_lwjgl_opengl_GL11_nglEnable(lib, a, funcPtr)
 {
 	checkNoList(curList);
-	if (a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST) {
+	if (a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST || a == glCtx.STENCIL_TEST || a == 0x8037/*GL_POLYGON_OFFSET_FILL*/) {
 		glCtx.enable(a);
 	} else if (a == 0xDE1 /* GL_TEXTURE_2D */) {
 		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 1.0);
 	} else if(a == 0x806F/*GL_TEXTURE_3D*/) {
 		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 1.0);
-	} else if(a == glCtx.BLEND) {
-		glCtx.enable(glCtx.BLEND);
-		glCtx.blendFunc(glCtx.SRC_ALPHA, glCtx.ONE_MINUS_SRC_ALPHA);
 	} else if (a == 0xBC0 /* GL_ALPHA_TEST */) {
 		glCtx.uniform1f(alphaTestEnableLocation, 1.0);
 	} else if (a == 0x0B60 /* GL_FOG */) {
@@ -1109,13 +1106,23 @@ function Java_org_lwjgl_opengl_GL11_nglDeleteTextures(lib, n, memPtr, funcPtr)
 
 function Java_org_lwjgl_opengl_GL11_nglTexParameteri(lib, target, pname, param, funcPtr)
 {
-	checkNoList(curList);
+	if (curList) return pushInList(curList, arguments, Java_org_lwjgl_opengl_GL11_nglTexParameteri);
+	if (pname === 0x2802 /* GL_TEXTURE_WRAP_S */ || pname === 0x2803 /* GL_TEXTURE_WRAP_T */) {
+		if (param === 0x2900 /* GL_CLAMP */ || param === 0x812F /* GL_CLAMP_TO_EDGE */ || param === 0x8059 /* GL_CLAMP_TO_BORDER */) {
+			param = glCtx.CLAMP_TO_EDGE;
+		}
+	}
 	glCtx.texParameteri(target, pname, param);
 }
 
 function Java_org_lwjgl_opengl_GL11_nglTexParameterf(lib, target, pname, param, funcPtr)
 {
-	checkNoList(curList);
+	if (curList) return pushInList(curList, arguments, Java_org_lwjgl_opengl_GL11_nglTexParameterf);
+	if (pname === 0x2802 /* GL_TEXTURE_WRAP_S */ || pname === 0x2803 /* GL_TEXTURE_WRAP_T */) {
+		if (param === 0x2900 /* GL_CLAMP */ || param === 0x812F /* GL_CLAMP_TO_EDGE */ || param === 0x8059 /* GL_CLAMP_TO_BORDER */) {
+			param = glCtx.CLAMP_TO_EDGE;
+		}
+	}
 	glCtx.texParameterf(target, pname, param);
 }
 
@@ -1139,8 +1146,10 @@ function Java_org_lwjgl_opengl_GL11_nglTexImage2D(lib, target, level, internalFo
     glCtx.texImage2D(target, level, glInt, width, height, border, glFmt, glTyp, buf);
 
     const isPot = ((width & (width - 1)) === 0) && ((height & (height - 1)) === 0);
-    glCtx.texParameteri(glCtx.TEXTURE_2D, glCtx.TEXTURE_WRAP_S, isPot ? glCtx.REPEAT : glCtx.CLAMP_TO_EDGE);
-    glCtx.texParameteri(glCtx.TEXTURE_2D, glCtx.TEXTURE_WRAP_T, isPot ? glCtx.REPEAT : glCtx.CLAMP_TO_EDGE);
+    if (!isPot) {
+        glCtx.texParameteri(glCtx.TEXTURE_2D, glCtx.TEXTURE_WRAP_S, glCtx.CLAMP_TO_EDGE);
+        glCtx.texParameteri(glCtx.TEXTURE_2D, glCtx.TEXTURE_WRAP_T, glCtx.CLAMP_TO_EDGE);
+    }
     glCtx.texParameteri(glCtx.TEXTURE_2D, glCtx.TEXTURE_MIN_FILTER, glCtx.NEAREST);
     glCtx.texParameteri(glCtx.TEXTURE_2D, glCtx.TEXTURE_MAG_FILTER, glCtx.NEAREST);
 }
