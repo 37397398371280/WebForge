@@ -1029,7 +1029,7 @@ function Java_org_lwjgl_opengl_GL11_nglViewport(lib, x, y, width, height, funcPt
 function Java_org_lwjgl_opengl_GL11_nglDisable(lib, a, funcPtr)
 {
 	checkNoList(curList);
-	if(a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST || a == glCtx.STENCIL_TEST || a == 0x8037/*GL_POLYGON_OFFSET_FILL*/){
+	if(a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST){
 		glCtx.disable(a);
 	} else if(a == 0x806F/*GL_TEXTURE_3D*/) {
 		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 0.0);
@@ -1047,12 +1047,15 @@ function Java_org_lwjgl_opengl_GL11_nglDisable(lib, a, funcPtr)
 function Java_org_lwjgl_opengl_GL11_nglEnable(lib, a, funcPtr)
 {
 	checkNoList(curList);
-	if (a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST || a == glCtx.STENCIL_TEST || a == 0x8037/*GL_POLYGON_OFFSET_FILL*/) {
+	if (a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST) {
 		glCtx.enable(a);
 	} else if (a == 0xDE1 /* GL_TEXTURE_2D */) {
 		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 1.0);
 	} else if(a == 0x806F/*GL_TEXTURE_3D*/) {
 		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 1.0);
+	} else if(a == glCtx.BLEND) {
+		glCtx.enable(glCtx.BLEND);
+		glCtx.blendFunc(glCtx.SRC_ALPHA, glCtx.ONE_MINUS_SRC_ALPHA);
 	} else if (a == 0xBC0 /* GL_ALPHA_TEST */) {
 		glCtx.uniform1f(alphaTestEnableLocation, 1.0);
 	} else if (a == 0x0B60 /* GL_FOG */) {
