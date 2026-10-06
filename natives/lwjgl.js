@@ -182,17 +182,13 @@ var texCoordData =
 // TODO: Make buffers resizeable if needed
 var immediateModeData = {
 	mode: 0,
-	vertexBuf: new Float32Array(65536),
-	vertexPos: 0,
-	texCoordBuf: new Float32Array(65536),
-	texCoordPos: 0,
-	colorBuf: new Float32Array(65536 * 4),
-	colorPos: 0,
-	normalBuf: new Float32Array(65536 * 3),
-	normalPos: 0,
+	buf: new Float32Array(65536 * 12),
+	vertexCount: 0,
 	currentColor: [1.0, 1.0, 1.0, 1.0],
+	currentTexCoord: [0.0, 0.0],
 	currentNormal: [0.0, 0.0, 1.0]
 };
+const immediateByteView = new Uint8Array(immediateModeData.buf.buffer);
 var verboseLog = false;
 var frameCount = 0;
 const scratchMat0 = glMatrix.mat4.create();
@@ -200,10 +196,6 @@ const multScratch = glMatrix.mat4.create();
 const scratchVec3 = new Float32Array(3);
 const MAX_TEXTURE_SIZE = 1024 * 1024 * 16;
 const scratchTextureBuf = new Uint8Array(MAX_TEXTURE_SIZE);
-const immediateVertexView = new Uint8Array(immediateModeData.vertexBuf.buffer);
-const immediateColorView = new Uint8Array(immediateModeData.colorBuf.buffer);
-const immediateNormalView = new Uint8Array(immediateModeData.normalBuf.buffer);
-const immediateTexCoordView = new Uint8Array(immediateModeData.texCoordBuf.buffer);
 const CAPTURE_SLAB_SIZE = 1024 * 1024 * 32;
 const captureSlab = new Uint8Array(CAPTURE_SLAB_SIZE);
 let captureSlabOffset = 0;
@@ -276,65 +268,83 @@ function getWasmHeapView(buffer)
 }
 function uploadAllData(v, count, capVert, capCol, capTex, capNorm)
 {
-    let vd = capVert || vertexData;
-    let cd = capCol || colorData;
-    let td = capTex || texCoordData;
-    let nd = capNorm || normalData;
+	let vd = capVert || vertexData;
+	let cd = capCol || colorData;
+	let td = capTex || texCoordData;
+	let nd = capNorm || normalData;
 
-    let heap = v ? v.buffer : null;
-    let heapView = heap ? getWasmHeapView(heap) : null;
-    let offset = 0;
+	let heap = v ? v.buffer : null;
+	let heapView = heap ? getWasmHeapView(heap) : null;
+	let offset = 0;
 
-    glCtx.bindBuffer(glCtx.ARRAY_BUFFER, singleVBO);
+	let vBytes = vd.enabled ? getEffectiveStride(vd) * count : 0;
+	let cBytes = cd.enabled ? getEffectiveStride(cd) * count : 0;
+	let tBytes = td.enabled ? getEffectiveStride(td) * count : 0;
+	let nBytes = nd.enabled ? getEffectiveStride(nd) * count : 0;
 
-    if (vd.enabled) {
-        let bytes = getEffectiveStride(vd) * count;
-        if (vd.buf) glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, vd.buf, 0, bytes);
-        else glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, heapView, vd.pointer, bytes);
-        glCtx.vertexAttribPointer(vertexPosition, vd.size, vd.type, vd.type !== glCtx.FLOAT, vd.stride, offset);
-        glCtx.enableVertexAttribArray(vertexPosition);
-        offset += bytes;
-    } else glCtx.disableVertexAttribArray(vertexPosition);
+	if (vd.enabled) {
+		let src = vd.buf ? vd.buf : heapView.subarray(vd.pointer, vd.pointer + vBytes);
+		batchBuffer.set(src.length === vBytes ? src : src.subarray(0, vBytes), offset);
+		offset += vBytes;
+	}
+	if (cd.enabled) {
+		let src = cd.buf ? cd.buf : heapView.subarray(cd.pointer, cd.pointer + cBytes);
+		batchBuffer.set(src.length === cBytes ? src : src.subarray(0, cBytes), offset);
+		offset += cBytes;
+	}
+	if (td.enabled) {
+		let src = td.buf ? td.buf : heapView.subarray(td.pointer, td.pointer + tBytes);
+		batchBuffer.set(src.length === tBytes ? src : src.subarray(0, tBytes), offset);
+		offset += tBytes;
+	}
+	if (nd.enabled) {
+		let src = nd.buf ? nd.buf : heapView.subarray(nd.pointer, nd.pointer + nBytes);
+		batchBuffer.set(src.length === nBytes ? src : src.subarray(0, nBytes), offset);
+		offset += nBytes;
+	}
 
-    if (cd.enabled) {
-        let bytes = getEffectiveStride(cd) * count;
-        if (cd.buf) glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, cd.buf, 0, bytes);
-        else glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, heapView, cd.pointer, bytes);
-        glCtx.vertexAttribPointer(colorLocation, cd.size, cd.type, cd.type !== glCtx.FLOAT, cd.stride, offset);
-        glCtx.enableVertexAttribArray(colorLocation);
-        offset += bytes;
-    } else glCtx.disableVertexAttribArray(colorLocation);
+	glCtx.bindBuffer(glCtx.ARRAY_BUFFER, singleVBO);
+	if (offset > 0) {
+		glCtx.bufferSubData(glCtx.ARRAY_BUFFER, 0, batchBuffer.subarray(0, offset));
+	}
 
-    if (td.enabled) {
-        let bytes = getEffectiveStride(td) * count;
-        if (td.buf) glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, td.buf, 0, bytes);
-        else glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, heapView, td.pointer, bytes);
-        glCtx.vertexAttribPointer(texCoord, td.size, td.type, td.type !== glCtx.FLOAT, td.stride, offset);
-        glCtx.enableVertexAttribArray(texCoord);
-        offset += bytes;
-    } else {
-        glCtx.disableVertexAttribArray(texCoord);
-        glCtx.vertexAttrib2f(texCoord, 0, 0);
-    }
+	let currOffset = 0;
+	if (vd.enabled) {
+		glCtx.vertexAttribPointer(vertexPosition, vd.size, vd.type, vd.type !== glCtx.FLOAT, vd.stride, currOffset);
+		glCtx.enableVertexAttribArray(vertexPosition);
+		currOffset += vBytes;
+	} else glCtx.disableVertexAttribArray(vertexPosition);
 
-    if (nd.enabled) {
-        let bytes = getEffectiveStride(nd) * count;
-        if (nd.buf) glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, nd.buf, 0, bytes);
-        else glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, heapView, nd.pointer, bytes);
-        glCtx.vertexAttribPointer(normalLocation, nd.size, nd.type, nd.type !== glCtx.FLOAT, nd.stride, offset);
-        glCtx.enableVertexAttribArray(normalLocation);
-    } else glCtx.disableVertexAttribArray(normalLocation);
+	if (cd.enabled) {
+		glCtx.vertexAttribPointer(colorLocation, cd.size, cd.type, cd.type !== glCtx.FLOAT, cd.stride, currOffset);
+		glCtx.enableVertexAttribArray(colorLocation);
+		currOffset += cBytes;
+	} else glCtx.disableVertexAttribArray(colorLocation);
+
+	if (td.enabled) {
+		glCtx.vertexAttribPointer(texCoord, td.size, td.type, td.type !== glCtx.FLOAT, td.stride, currOffset);
+		glCtx.enableVertexAttribArray(texCoord);
+		currOffset += tBytes;
+	} else {
+		glCtx.disableVertexAttribArray(texCoord);
+		glCtx.vertexAttrib2f(texCoord, 0, 0);
+	}
+
+	if (nd.enabled) {
+		glCtx.vertexAttribPointer(normalLocation, nd.size, nd.type, nd.type !== glCtx.FLOAT, nd.stride, currOffset);
+		glCtx.enableVertexAttribArray(normalLocation);
+	} else glCtx.disableVertexAttribArray(normalLocation);
 }
 
 function captureData(v, data, count)
 {
 	var ret = { enabled: data.enabled, size: data.size, type: data.type, stride: data.stride, pointer: 0, buf: null };
-	if(data.enabled)
+	if (data.enabled)
 	{
 		var effectiveStride = getEffectiveStride(data);
 		var len = effectiveStride * count;
 		var heapView = getWasmHeapView(v.buffer);
-		ret.buf = new Uint8Array(heapView.subarray(data.pointer, data.pointer + len));
+		ret.buf = heapView.subarray(data.pointer, data.pointer + len);
 	}
 	return ret;
 }
@@ -395,45 +405,33 @@ function pushDrawArraysInList(list, v, mode, first, count)
 	var cSize = cCap.enabled ? getEffectiveStride(cCap) * count : 0;
 	var tSize = tCap.enabled ? getEffectiveStride(tCap) * count : 0;
 	var nSize = nCap.enabled ? getEffectiveStride(nCap) * count : 0;
+	var totalSize = vSize + cSize + tSize + nSize;
+
+	var offset = 0;
+	if (vCap.enabled) { batchBuffer.set(vCap.buf, offset); offset += vSize; }
+	if (cCap.enabled) { batchBuffer.set(cCap.buf, offset); offset += cSize; }
+	if (tCap.enabled) { batchBuffer.set(tCap.buf, offset); offset += tSize; }
+	if (nCap.enabled) { batchBuffer.set(nCap.buf, offset); offset += nSize; }
 
 	var gpuBuf = glCtx.createBuffer();
+	var vao = glCtx.createVertexArray();
+
+	glCtx.bindVertexArray(vao);
 	glCtx.bindBuffer(glCtx.ARRAY_BUFFER, gpuBuf);
+	glCtx.bufferData(glCtx.ARRAY_BUFFER, batchBuffer.subarray(0, totalSize), glCtx.STATIC_DRAW);
 
-	var packed = new Uint8Array(vSize + cSize + tSize + nSize);
-	var offset = 0;
-	if (vCap.enabled) { packed.set(vCap.buf, offset); offset += vSize; }
-	if (cCap.enabled) { packed.set(cCap.buf, offset); offset += cSize; }
-	if (tCap.enabled) { packed.set(tCap.buf, offset); offset += tSize; }
-	if (nCap.enabled) { packed.set(nCap.buf, offset); offset += nSize; }
-
-	glCtx.bufferData(glCtx.ARRAY_BUFFER, packed, glCtx.STATIC_DRAW);
-
-	list.push({
-		f: drawArraysInList,
-		a: [mode, first, count, vCap, cCap, tCap, nCap, vSize, cSize, tSize, gpuBuf],
-		gpuBuf: gpuBuf
-	});
-}
-function drawArraysInList(mode, first, count, vCap, cCap, tCap, nCap, vSize, cSize, tSize, gpuBuf)
-{
-	glCtx.bindBuffer(glCtx.ARRAY_BUFFER, gpuBuf);
-	var offset = 0;
-
+	offset = 0;
 	if (vCap.enabled) {
 		glCtx.vertexAttribPointer(vertexPosition, vCap.size, vCap.type, vCap.type !== glCtx.FLOAT, vCap.stride, offset);
 		glCtx.enableVertexAttribArray(vertexPosition);
 		offset += vSize;
-	} else {
-		glCtx.disableVertexAttribArray(vertexPosition);
-	}
+	} else glCtx.disableVertexAttribArray(vertexPosition);
 
 	if (cCap.enabled) {
 		glCtx.vertexAttribPointer(colorLocation, cCap.size, cCap.type, cCap.type !== glCtx.FLOAT, cCap.stride, offset);
 		glCtx.enableVertexAttribArray(colorLocation);
 		offset += cSize;
-	} else {
-		glCtx.disableVertexAttribArray(colorLocation);
-	}
+	} else glCtx.disableVertexAttribArray(colorLocation);
 
 	if (tCap.enabled) {
 		glCtx.vertexAttribPointer(texCoord, tCap.size, tCap.type, tCap.type !== glCtx.FLOAT, tCap.stride, offset);
@@ -447,11 +445,22 @@ function drawArraysInList(mode, first, count, vCap, cCap, tCap, nCap, vSize, cSi
 	if (nCap.enabled) {
 		glCtx.vertexAttribPointer(normalLocation, nCap.size, nCap.type, nCap.type !== glCtx.FLOAT, nCap.stride, offset);
 		glCtx.enableVertexAttribArray(normalLocation);
-	} else {
-		glCtx.disableVertexAttribArray(normalLocation);
-	}
+	} else glCtx.disableVertexAttribArray(normalLocation);
 
+	glCtx.bindVertexArray(null);
+
+	list.push({
+		f: drawArraysInList,
+		a: [mode, first, count, vao],
+		gpuBuf: gpuBuf,
+		vao: vao
+	});
+}
+function drawArraysInList(mode, first, count, vao)
+{
+	glCtx.bindVertexArray(vao);
 	drawArraysImpl(mode, first, count);
+	glCtx.bindVertexArray(null);
 }
 // Fix the sampler to texture unit 0
 glCtx.uniform1i(samplerLocation, 0);
@@ -627,32 +636,41 @@ function isPowerOfTwo(x)
 
 function getTextureData(v, memPtr, width, height, format, type)
 {
-    const ptr = Number(memPtr);
-    if (ptr === 0) return null;
+	const ptr = Number(memPtr);
+	if (ptr === 0) return null;
 
-    let bpp = 4; 
-    if (format === 0x1907 /* GL_RGB */) bpp = 3;
-    else if (format === 0x1909 /* GL_LUMINANCE */) bpp = 1;
-    else if (format === 0x190A /* GL_LUMINANCE_ALPHA */) bpp = 2;
-    else if (format === 0x1908 /* GL_RGBA */ || format === 0x80E1 /* GL_BGRA */) bpp = 4;
+	let bpp = 4; 
+	if (format === 0x1907 /* GL_RGB */) bpp = 3;
+	else if (format === 0x1909 /* GL_LUMINANCE */) bpp = 1;
+	else if (format === 0x190A /* GL_LUMINANCE_ALPHA */) bpp = 2;
+	else if (format === 0x1908 /* GL_RGBA */ || format === 0x80E1 /* GL_BGRA */) bpp = 4;
 
-    if (type === 0x1403 /* UNSIGNED_SHORT */) bpp *= 2;
-    if (type === 0x1406 /* FLOAT */) bpp *= 4;
+	if (type === 0x1403 /* UNSIGNED_SHORT */) bpp *= 2;
+	if (type === 0x1406 /* FLOAT */) bpp *= 4;
 
-    const size = width * height * bpp;
-    const src = getWasmHeapView(v.buffer).subarray(ptr, ptr + size);
+	const size = width * height * bpp;
+	const src = getWasmHeapView(v.buffer).subarray(ptr, ptr + size);
 
-    if (format === 0x80E1 /* GL_BGRA */) {
-        scratchTextureBuf.set(src);
-        for (let i = 0; i < size; i += 4) {
-            let b = scratchTextureBuf[i];
-            scratchTextureBuf[i] = scratchTextureBuf[i + 2];
-            scratchTextureBuf[i + 2] = b;
-        }
-        return scratchTextureBuf.subarray(0, size);
-    }
+	if (format === 0x80E1 /* GL_BGRA */) {
+		if ((src.byteOffset % 4) === 0) {
+			const src32 = new Uint32Array(src.buffer, src.byteOffset, size / 4);
+			const dst32 = new Uint32Array(scratchTextureBuf.buffer, 0, size / 4);
+			for (let i = 0; i < src32.length; i++) {
+				const pixel = src32[i];
+				dst32[i] = (pixel & 0xFF00FF00) | ((pixel & 0xFF) << 16) | ((pixel >> 16) & 0xFF);
+			}
+		} else {
+			for (let i = 0; i < size; i += 4) {
+				scratchTextureBuf[i]     = src[i + 2];
+				scratchTextureBuf[i + 1] = src[i + 1];
+				scratchTextureBuf[i + 2] = src[i];
+				scratchTextureBuf[i + 3] = src[i + 3];
+			}
+		}
+		return scratchTextureBuf.subarray(0, size);
+	}
 
-    return src;
+	return src;
 }
 
 function translateGLFormat(f) { return (f === 0x80E1 /* BGRA */) ? glCtx.RGBA : f; }
@@ -1029,33 +1047,36 @@ function Java_org_lwjgl_opengl_GL11_nglViewport(lib, x, y, width, height, funcPt
 function Java_org_lwjgl_opengl_GL11_nglDisable(lib, a, funcPtr)
 {
 	checkNoList(curList);
+	const cacheKey = (a === 0xDE1 || a === 0x806F) ? (a + "_" + activeTextureUnit) : a;
+	if (glStateCache[cacheKey] === false) return;
+	glStateCache[cacheKey] = false;
+
 	if(a == glCtx.BLEND || a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST){
 		glCtx.disable(a);
-	} else if(a == 0x806F/*GL_TEXTURE_3D*/) {
-		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 0.0);
+	} else if(a == 0x806F/*GL_TEXTURE_3D*/ || a == 0xDE1 /* GL_TEXTURE_2D */) {
+		if (activeTextureUnit === 0) glCtx.uniform1f(texMaskLocation, 0.0);
 	} else if (a == 0xBC0 /* GL_ALPHA_TEST */) {
 		glCtx.uniform1f(alphaTestEnableLocation, 0.0);
 	} else if (a == 0x0B60 /* GL_FOG */) {
 		glCtx.uniform1f(fogEnableLocation, 0.0);
-	} else if (a == 0xDE1 /* GL_TEXTURE_2D */) {
-		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 0.0);
-	} else if(verboseLog) {
-		console.log("glDisable " + a.toString(16));
-	}
+  	} else if(verboseLog) {
+   		console.log("glDisable " + a.toString(16));
+   	}
 }
 
 function Java_org_lwjgl_opengl_GL11_nglEnable(lib, a, funcPtr)
 {
 	checkNoList(curList);
+	const cacheKey = (a === 0xDE1 || a === 0x806F) ? (a + "_" + activeTextureUnit) : a;
+	if (glStateCache[cacheKey] === true) return;
+	glStateCache[cacheKey] = true;
+
 	if (a == glCtx.CULL_FACE || a == glCtx.DEPTH_TEST || a == glCtx.SCISSOR_TEST) {
 		glCtx.enable(a);
-	} else if (a == 0xDE1 /* GL_TEXTURE_2D */) {
-		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 1.0);
-	} else if(a == 0x806F/*GL_TEXTURE_3D*/) {
-		if (currentActiveTexture === 0x84C0) glCtx.uniform1f(texMaskLocation, 1.0);
+	} else if (a == 0xDE1 /* GL_TEXTURE_2D */ || a == 0x806F/*GL_TEXTURE_3D*/) {
+		if (activeTextureUnit === 0) glCtx.uniform1f(texMaskLocation, 1.0);
 	} else if(a == glCtx.BLEND) {
 		glCtx.enable(glCtx.BLEND);
-		glCtx.blendFunc(glCtx.SRC_ALPHA, glCtx.ONE_MINUS_SRC_ALPHA);
 	} else if (a == 0xBC0 /* GL_ALPHA_TEST */) {
 		glCtx.uniform1f(alphaTestEnableLocation, 1.0);
 	} else if (a == 0x0B60 /* GL_FOG */) {
@@ -1088,6 +1109,7 @@ function Java_org_lwjgl_opengl_GL11_nglBindTexture(lib, target, id, funcPtr)
 {
 	checkNoList(curList);
 	assert(target == glCtx.TEXTURE_2D);
+	if (boundTextures[activeTextureUnit] === id) return;
 	boundTextures[activeTextureUnit] = id;
 	glCtx.bindTexture(target, textureObjects[id]);
 }
@@ -1276,7 +1298,10 @@ function Java_org_lwjgl_opengl_GL11_nglNewList(lib, list, mode, funcPtr)
 	checkNoList(curList);
 	assert(mode == 0x1300/*GL_COMPILE*/);
 	curList = cmdLists[list];
-	for (var i = 0; i < curList.length; i++) if (curList[i].gpuBuf) glCtx.deleteBuffer(curList[i].gpuBuf);
+	for (var i = 0; i < curList.length; i++) {
+		if (curList[i].gpuBuf) glCtx.deleteBuffer(curList[i].gpuBuf);
+		if (curList[i].vao) glCtx.deleteVertexArray(curList[i].vao);
+	}
 	curList.length = 0;
 }
 
@@ -1563,10 +1588,16 @@ function Java_org_lwjgl_opengl_GL11_nglCallList(lib, listId, funcPtr)
 function Java_org_lwjgl_opengl_GL13_nglActiveTexture(lib, texture, funcPtr)
 {
 	if(curList) return pushInList(curList, arguments, Java_org_lwjgl_opengl_GL13_nglActiveTexture);
+	if (currentActiveTexture === texture) return;
 	if(verboseLog) console.log("glActiveTexture: " + texture.toString(16));
 	activeTextureUnit = texture - 0x84C0;
 	currentActiveTexture = texture;
 	glCtx.activeTexture(texture);
+
+	if (activeTextureUnit === 0) {
+		const isTexEnabled = glStateCache[0xDE1 + "_0"] !== false;
+		glCtx.uniform1f(texMaskLocation, isTexEnabled ? 1.0 : 0.0);
+	}
 }
 
 function Java_org_lwjgl_opengl_GL11_nglLightfv()
@@ -1624,109 +1655,65 @@ function Java_org_lwjgl_opengl_GL11_nglBegin(lib, mode, funcPtr)
 {
 	checkNoList(curList);
 	immediateModeData.mode = mode;
-	immediateModeData.vertexPos = 0;
-	immediateModeData.texCoordPos = 0;
-	immediateModeData.colorPos = 0;
-	immediateModeData.normalPos = 0;
+	immediateModeData.vertexCount = 0;
 }
 
 function Java_org_lwjgl_opengl_GL11_nglTexCoord2f(lib, x, y, funcPtr)
 {
 	checkNoList(curList);
-	var curPos = immediateModeData.texCoordPos;
-	if(curPos > immediateModeData.texCoordBuf.length)
-	{
-		console.log("glTexCoord2f overflow");
-		return;
-	}
-	immediateModeData.texCoordBuf[curPos] = x;
-	immediateModeData.texCoordBuf[curPos + 1] = y;
-	immediateModeData.texCoordPos = curPos + 2;
+	immediateModeData.currentTexCoord[0] = x;
+	immediateModeData.currentTexCoord[1] = y;
 }
 
 function Java_org_lwjgl_opengl_GL11_nglVertex2f(lib, x, y, funcPtr)
 {
-	checkNoList(curList);
-	immediateModeData.vertexBuf[immediateModeData.vertexPos++] = x;
-	immediateModeData.vertexBuf[immediateModeData.vertexPos++] = y;
-	immediateModeData.vertexBuf[immediateModeData.vertexPos++] = 0.0;
-
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[0];
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[1];
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[2];
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[3];
-
-	immediateModeData.normalBuf[immediateModeData.normalPos++] = immediateModeData.currentNormal[0];
-	immediateModeData.normalBuf[immediateModeData.normalPos++] = immediateModeData.currentNormal[1];
-	immediateModeData.normalBuf[immediateModeData.normalPos++] = immediateModeData.currentNormal[2];
+	Java_org_lwjgl_opengl_GL11_nglVertex3f(lib, x, y, 0.0, funcPtr);
 }
 
 function Java_org_lwjgl_opengl_GL11_nglVertex3f(lib, x, y, z, funcPtr)
 {
 	checkNoList(curList);
-	immediateModeData.vertexBuf[immediateModeData.vertexPos++] = x;
-	immediateModeData.vertexBuf[immediateModeData.vertexPos++] = y;
-	immediateModeData.vertexBuf[immediateModeData.vertexPos++] = z;
-
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[0];
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[1];
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[2];
-	immediateModeData.colorBuf[immediateModeData.colorPos++] = immediateModeData.currentColor[3];
-
-	immediateModeData.normalBuf[immediateModeData.normalPos++] = immediateModeData.currentNormal[0];
-	immediateModeData.normalBuf[immediateModeData.normalPos++] = immediateModeData.currentNormal[1];
-	immediateModeData.normalBuf[immediateModeData.normalPos++] = immediateModeData.currentNormal[2];
+	let idx = immediateModeData.vertexCount * 12;
+	let b = immediateModeData.buf;
+	b[idx]      = x;
+	b[idx + 1]  = y;
+	b[idx + 2]  = z;
+	b[idx + 3]  = immediateModeData.currentColor[0];
+	b[idx + 4]  = immediateModeData.currentColor[1];
+	b[idx + 5]  = immediateModeData.currentColor[2];
+	b[idx + 6]  = immediateModeData.currentColor[3];
+	b[idx + 7]  = immediateModeData.currentTexCoord[0];
+	b[idx + 8]  = immediateModeData.currentTexCoord[1];
+	b[idx + 9]  = immediateModeData.currentNormal[0];
+	b[idx + 10] = immediateModeData.currentNormal[1];
+	b[idx + 11] = immediateModeData.currentNormal[2];
+	immediateModeData.vertexCount++;
 }
 
 function Java_org_lwjgl_opengl_GL11_nglEnd(lib, funcPtr)
 {
-    checkNoList(curList);
-    var count = immediateModeData.vertexPos / 3;
+	checkNoList(curList);
+	const count = immediateModeData.vertexCount;
+	if (count === 0) return;
 
-    let offset = 0;
-    let vBytes = immediateModeData.vertexPos * 4;
-    let cBytes = immediateModeData.colorPos * 4;
-    let tBytes = immediateModeData.texCoordPos * 4;
-    let nBytes = immediateModeData.normalPos * 4;
+	const byteLen = count * 12 * 4;
 
-    glCtx.bindBuffer(glCtx.ARRAY_BUFFER, singleVBO);
+	glCtx.bindBuffer(glCtx.ARRAY_BUFFER, singleVBO);
+	glCtx.bufferSubData(glCtx.ARRAY_BUFFER, 0, immediateByteView, 0, byteLen);
 
-    glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, immediateVertexView, 0, vBytes);
-    glCtx.vertexAttribPointer(vertexPosition, 3, glCtx.FLOAT, false, 0, offset);
-    glCtx.enableVertexAttribArray(vertexPosition);
-    offset += vBytes;
+	glCtx.vertexAttribPointer(vertexPosition, 3, glCtx.FLOAT, false, 48, 0);
+	glCtx.enableVertexAttribArray(vertexPosition);
 
-    glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, immediateColorView, 0, cBytes);
-    glCtx.vertexAttribPointer(colorLocation, 4, glCtx.FLOAT, false, 0, offset);
-    glCtx.enableVertexAttribArray(colorLocation);
-    offset += cBytes;
+	glCtx.vertexAttribPointer(colorLocation, 4, glCtx.FLOAT, false, 48, 12);
+	glCtx.enableVertexAttribArray(colorLocation);
 
-    if (tBytes > 0)
-    {
-        glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, immediateTexCoordView, 0, tBytes);
-        glCtx.vertexAttribPointer(texCoord, 2, glCtx.FLOAT, false, 0, offset);
-        glCtx.enableVertexAttribArray(texCoord);
-        offset += tBytes;
-    }
-    else
-    {
-        glCtx.disableVertexAttribArray(texCoord);
-        glCtx.vertexAttrib2f(texCoord, 0, 0);
-    }
+	glCtx.vertexAttribPointer(texCoord, 2, glCtx.FLOAT, false, 48, 28);
+	glCtx.enableVertexAttribArray(texCoord);
 
-    if (nBytes > 0)
-    {
-        glCtx.bufferSubData(glCtx.ARRAY_BUFFER, offset, immediateNormalView, 0, nBytes);
-        glCtx.vertexAttribPointer(normalLocation, 3, glCtx.FLOAT, false, 0, offset);
-        glCtx.enableVertexAttribArray(normalLocation);
-    }
-    else
-    {
-        glCtx.disableVertexAttribArray(normalLocation);
-        glCtx.vertexAttrib3f(normalLocation, 0.0, 0.0, 1.0);
-    }
+	glCtx.vertexAttribPointer(normalLocation, 3, glCtx.FLOAT, false, 48, 36);
+	glCtx.enableVertexAttribArray(normalLocation);
 
-    drawArraysImpl(immediateModeData.mode, 0, count);
+	drawArraysImpl(immediateModeData.mode, 0, count);
 }
 
 // These stubs make sure audio creation fails sooner rather than later
